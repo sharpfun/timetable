@@ -1,0 +1,6 @@
+{% extends "layout.html" %}
+{% block title %}{{form.singular}} bearbeiten{% endblock %}
+{% block content %}
+<h1>{{form.singular}} bearbeiten</h1>
+{{ form.render() | safe }}
+{% endblock %}
