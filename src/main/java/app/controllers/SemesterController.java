@@ -12,7 +12,7 @@ public class SemesterController extends AppController {
     }
     
     public void show() {
-        Semester semester = Semester.findById(param("id"));
+        Semester semester = Semester.findById(getId());
         view("semester", semester);
         view("glvs", semester.getAllGeplanteLehrveranstaltungen());
     }
