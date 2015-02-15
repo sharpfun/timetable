@@ -1,0 +1,47 @@
+{% extends 'admin/master.html' %}
+{% block body %}
+{{ super() }}
+<div class="row-fluid">
+
+    <div>
+        {% if current_user.is_authenticated() %}
+        <h1>Welcome to Abrakadabra</h1>
+        <p class="lead">
+            Logged in successfully as user "{{current_user.login}}"
+            ({{ 'with' if current_user.is_admin else 'without' }} administrator rights).
+        </p>
+        {% if current_user.is_admin %}
+        <p>
+            Please be careful with the functions under the heading 'Database'. They give you immediate write
+            access to the database. If you delete an object that is still in use, or if you change its id, chaos will
+            likely ensue.
+        </p>
+        {% endif %}
+        <p>
+            There is plenty of free space here. Maybe we should use it for latest news (database and usage statistics!)
+            or for prominent links.
+        </p>
+        {% else %}
+        <form method="POST" action="">
+            {{ form.hidden_tag() if form.hidden_tag }}
+            {% for f in form if f.type != 'CSRFTokenField' %}
+            <div>
+            {{ f.label }}
+            {{ f }}
+            {% if f.errors %}
+            <ul>
+                {% for e in f.errors %}
+                <li>{{ e }}</li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+            </div>
+            {% endfor %}
+            <button class="btn" type="submit">Submit</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <a class="btn btn-primary" href="/"><i class="icon-arrow-left icon-white"></i> Back</a>
+</div>
+{% endblock body %}
