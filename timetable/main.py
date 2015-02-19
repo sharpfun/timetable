@@ -1,5 +1,6 @@
 from flask import Flask, url_for, redirect, render_template, request
 from flask_sqlalchemy import SQLAlchemy, Model
+from sqlalchemy import Table, Sequence
 import flask_admin as admin
 import flask_login as login
 from flask_admin import helpers, expose
@@ -70,20 +71,72 @@ def init_login():
 ### VIEW BASE CLASSES
 
 class AdminView(sqla.ModelView):
+    form_widget_args = {
+        'id': {
+            'disabled': True
+        }
+    }
+    def __init__(self, model, session=db.session, name=None, category='Database', endpoint=None, url=None):
+        basename = self.__class__.__name__[:-len('AdminView')]
+        if not name:
+            name = basename + ' (Admin)'
+        if not endpoint:
+            endpoint = basename.lower() + '_admin'
+        if not url:
+            url = '/admin/db/{}'.format(basename.lower())
+        sqla.ModelView.__init__(self, model, session, name=name, category=category, endpoint=endpoint, url=url)
     def is_accessible(self):
         return login.current_user.is_authenticated() and login.current_user.is_admin
 
 class UserView(sqla.ModelView):
+    form_widget_args = {
+        'id': {
+            'disabled': True
+        }
+    }
+    def __init__(self, model, session=db.session, name=None, category=None, endpoint=None, url=None):
+        basename = self.__class__.__name__[:-len('UserView')]
+        if not name:
+            name = basename
+        if not endpoint:
+            endpoint = basename.lower() + '_user'
+        if not url:
+            url = '/admin/{}'.format(basename.lower())
+        sqla.ModelView.__init__(self, model, session, name=name, category=category, endpoint=endpoint, url=url)
     def is_accessible(self):
         return login.current_user.is_authenticated()
 
 
 
+# class UserView2(admin.BaseView):
+#     def __init__(self, name=None, category=None, url=None):
+#         if not name:
+#             name = self.__class__.__name__[:-len('UserView2')]
+#         if not url:
+#             url = self.__class__.__name__[:-len('UserView2')].lower()
+#         admin.BaseView.__init__(self, name=name, category=category, url=url)
+#     def is_accessible(self):
+#         return login.current_user.is_authenticated()
+
+
+
+
+### JOIN TABLES
+
+jt_cohort_course = Table('jt_cohort_course', db.Model.metadata,
+                             db.Column('cohort_id', db.Integer, db.ForeignKey('cohort.id')),
+                             db.Column('course_id', db.Integer, db.ForeignKey('course.id'))
+                         )
+
+
+###
+### From here on follows a long list of entities (classes of database-backed objects), each with an admin interface
+###
 
 ### USER
 
 class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
     login = db.Column(db.String(80), unique=True)
     email = db.Column(db.String(120))
     password = db.Column(db.String(64))
@@ -113,134 +166,114 @@ class User(db.Model):
     def get_id(self):
         return self.id
 
-class UserAdmin(AdminView):
+class UserAdminView(AdminView):
     column_display_pk = True
     form_columns = ['id', 'login', 'is_admin', 'email', 'password']
-
-# class UserUser(UserView):
-#     form_columns = ['login', 'email', 'password']
-#     def scaffold_sortable_columns(self):
-#         return {}
-#     def init_search(self):
-#         return False
-#     # def scaffold_form(self):
-#     #     converter = self.model_form_converter(self.session, self)
-#     #     form_class = form.get_form(self.model, converter,
-#     #                                base_class=self.form_base_class,
-#     #                                only=self.form_columns,
-#     #                                exclude=self.form_excluded_columns,
-#     #                                field_args=self.form_args,
-#     #                                extra_fields=self.form_extra_fields)
-#     #
-#     #     if self.inline_models:
-#     #         form_class = self.scaffold_inline_form_models(form_class)
-#     #     return form_class
-#     def get_list(self, page, sort_column, sort_desc, search, filters, execute=True):
-#         user = login.current_user
-#         if user.is_authenticated:
-#             return 1, (user,)
-#         else:
-#             return 0, ()
-#     def get_one(self, id):
-#         user = login.current_user
-#         if user.is_authenticated and user.id == id:
-#             return user
-#         else:
-#             return None
-#     def create_model(self, form):
-#         return False
-#     def update_model(self, form, model):
-#         # XXX: Possible privilege escalation!
-#         # We must check that users don't try to make themselves admins!
-#         try:
-#             form.populate_obj(model)
-#             self._on_model_change(form, model, False)
-#             self.session.commit()
-#         except Exception as ex:
-#             if not self.handle_view_exception(ex):
-#                 flash(gettext('Failed to update record. %(error)s', error=str(ex)), 'error')
-#                 log.exception('Failed to update record.')
-#
-#             self.session.rollback()
-#
-#             return False
-#         else:
-#             self.after_model_change(form, model, False)
-#
-#         return True
-#     def delete_model(self, model):
-#         return False
-#     def scaffold_filters(self, name):
-#         return []
-#     def get_count_query(self):
-#         user = login.current_user
-#         if user.is_authenticated:
-#             return 1
-#         else:
-#             return 0
 
 ### SEMESTER
 
 class Semester(db.Model):
-    __tablename__ = 'semester'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    code = db.Column(db.String(7))
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
+    name = db.Column(db.String(7))
+    #courses = db.relationship('Course', backref='semester')
+    def __init__(self, name, id=None):
+        self.id=id
+        self.name=name
     def __str__(self):
-        return self.code
+        return self.name
 
-class SemesterAdmin(AdminView):
+class SemesterAdminView(AdminView):
     column_display_pk = True
-    form_columns = ['id', 'code']
+    form_columns = ['id', 'name', 'courses']
+
+class SemesterUserView(UserView):
+    column_display_pk = False
+    form_columns = ['id', 'name', 'courses']
+    can_create = False
+    can_edit = True
+    can_delete = False
+    form_widget_args = {
+        'id': {
+            'disabled': True
+        },
+        'name': {
+            'disabled': True
+        },
+        'courses': {
+            'disabled': True
+        }
+    }
 
 
 
 ### CHAIR / PROFESSUR
 
 class Chair(db.Model):
-    __tablename__ = 'chair'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
     name = db.Column(db.String(64))
     def __str__(self):
         return self.name
 
-class ChairAdmin(AdminView):
+class ChairAdminView(AdminView):
     column_display_pk = True
     form_columns = ['id', 'name']
+
+class ChairUserView(UserView):
+    column_display_pk = True
+    form_columns = ['id', 'name']
+    can_create = False
+    can_edit = False
+    can_delete = False
 
 
 
 ### COURSE / LEHRANGEBOT
 
 class Course(db.Model):
-    __tablename__ = 'course'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
     name = db.Column(db.String(128))
     semester_id = db.Column(db.Integer, db.ForeignKey('semester.id'))
     semester = db.relationship('Semester', backref='courses')
     chair_id = db.Column(db.Integer, db.ForeignKey('chair.id'))
     chair = db.relationship('Chair', backref='courses')
+    cohorts = db.relationship('Cohort', secondary=jt_cohort_course, backref='course')
     def __str__(self):
-        return '{} {}'.format(self.short_name, self.semester)
+        return '{} {}'.format(self.name, self.semester)
 
-class CourseAdmin(AdminView):
+class CourseAdminView(AdminView):
     column_display_pk = True
-    form_columns = ['id', 'semester', 'chair', 'name']
+    form_columns = ['id', 'semester', 'chair', 'name', 'cohorts']
+
+class CourseUserView(UserView):
+    column_display_pk = True
+    form_columns = ['semester', 'chair', 'name', 'cohorts']
+    form_widget_args = {
+        'semester': {
+            'disabled': True
+        }
+    }
 
 
 
-### COURSE OF STUDIES / STUDIENGANG
+### PROGRAM / STUDIENGANG
 
-class CourseOfStudies(db.Model):
-    __tablename__ = 'course_of_studies'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+class Program(db.Model):
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
     name = db.Column(db.String(200))
     short_name = db.Column(db.String(40))
     def __str__(self):
         return self.short_name
 
-class CourseOfStudiesAdmin(AdminView):
+class ProgramAdminView(AdminView):
     column_display_pk = True
     form_columns = ['id', 'short_name', 'name']
+
+class ProgramUserView(UserView):
+    column_display_pk = True
+    form_columns = ['id', 'short_name', 'name']
+    can_create = False
+    can_edit = False
+    can_delete = False
 
 
 
@@ -248,10 +281,11 @@ class CourseOfStudiesAdmin(AdminView):
 
 class Cohort(db.Model):
     __tablename__ = 'cohort'
-    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    course_of_studies_id = db.Column(db.Integer, db.ForeignKey('course_of_studies.id'))
-    course_of_studies = db.relationship('CourseOfStudies', backref='cohorts')
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
+    program_id = db.Column(db.Integer, db.ForeignKey('program.id'))
+    program = db.relationship('Program', backref='cohorts')
     study_semester = db.Column(db.Integer)
+    courses = db.relationship('Course', secondary=jt_cohort_course, backref='cohort')
     def __str__(self):
         if self.study_semester == 1:
             th = 'st'
@@ -259,16 +293,38 @@ class Cohort(db.Model):
             th = 'nd'
         else:
             th = 'th'
-        return '{}{} study semester of {}'.format(self.study_semester, th, self.course_of_studies)
+        return '{} {}{} semester'.format(self.program, self.study_semester, th)
 
-class CohortAdmin(AdminView):
+class CohortAdminView(AdminView):
     column_display_pk = True
-    form_columns = ['id', 'course_of_studies', 'study_semester']
+    form_columns = ['id', 'program', 'study_semester', 'courses']
+
+class CohortUserView(UserView):
+    column_display_pk = True
+    form_columns = ['id', 'program', 'study_semester', 'courses']
+    can_create = False
+    can_edit = False
+    can_delete = False
+
+
+###
+### With all entities defined, we now come to user views. Most of them do not directly correspond to a particular
+### entity.
+###
+
+# class CourseUserView(UserView):
+#     @admin.expose('/')
+#     def index(self):
+#         print("***")
+#         return self.render('course.html')
+#
 
 
 
 
-### ADMIN VIEWS
+
+### CENTRAL 'ADMIN' VIEW
+### (We are actually using it for normal users as well.)
 
 # Create customized index view class that handles login
 class MyAdminIndexView(admin.AdminIndexView):
@@ -301,22 +357,37 @@ class MyAdminIndexView(admin.AdminIndexView):
 # Initialize flask-login
 init_login()
 
-# Create admin
-admin = admin.Admin(app, 'Abrakadabra', index_view=MyAdminIndexView(), base_template='my_master.html')
+# Create admin interface
+adminInterface = admin.Admin(app, 'Abrakadabra', index_view=MyAdminIndexView(), base_template='my_master.html')
 
-admin.add_view(UserAdmin(User, db.session, category='Database'))
-admin.add_view(SemesterAdmin(Semester, db.session, category='Database'))
-admin.add_view(ChairAdmin(Chair, db.session, category='Database'))
-admin.add_view(CourseAdmin(Course, db.session, category='Database'))
-admin.add_view(CourseOfStudiesAdmin(CourseOfStudies, db.session, category='Database'))
-admin.add_view(CohortAdmin(Cohort, db.session, category='Database'))
+# Views for all users
+adminInterface.add_view(CourseUserView(Course))
+adminInterface.add_view(SemesterUserView(Semester))
+adminInterface.add_view(ChairUserView(Chair))
+adminInterface.add_view(ProgramUserView(Program))
+adminInterface.add_view(CohortUserView(Cohort))
 
+# Additional views for admins
+adminInterface.add_view(UserAdminView(User))
+adminInterface.add_view(SemesterAdminView(Semester))
+adminInterface.add_view(ChairAdminView(Chair))
+adminInterface.add_view(CourseAdminView(Course))
+adminInterface.add_view(ProgramAdminView(Program))
+adminInterface.add_view(CohortAdminView(Cohort))
 
+relevant_semester = 23 # TODO: compute from current date, and make sure this semester and all previous ones exist!
 
-def build_sample_db():
+######################################################################################################################
+######################################################################################################################
+######################################################################################################################
+
+# Building/importing the initial database
+
+def build_db():
     db.create_all()
-    # passwords are hashed, to use plaintext passwords instead:
-    # test_user = User(login="test", password="test")
+
+    # USERS
+
     user = User(login='admin', password='admin')
     user.is_admin = True
     db.session.add(user)
@@ -324,18 +395,29 @@ def build_sample_db():
     db.session.add(user)
     db.session.commit()
 
+    # SEMESTERS
 
-if __name__ == '__main__':
+    for id in range(1, relevant_semester+3):
+        semesterType = 'SS' if id%2==1 else 'WS'
+        year = 2004 + int((id-1)/2)
+        semester = Semester(id=id, name='{} {}'.format(semesterType, year))
+        db.session.add(semester)
+    db.session.commit()
 
-    if not os.path.exists(db_path):
-        db.create_all()
-        build_sample_db()
-    else:
-        db.create_all()
+if not os.path.exists(db_path):
+    db.create_all()
+    build_db()
+else:
+    db.create_all()
+
+######################################################################################################################
+######################################################################################################################
+######################################################################################################################
 
 
-    # Start app
-    app.run(debug=True)
+
+# Start app
+app.run(debug=True)
 
 
 from flask_admin.model import BaseModelView
