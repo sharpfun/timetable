@@ -24,7 +24,7 @@ app.config['SECRET_KEY'] = 'I am not actually secret. Fix me before deployment!'
 # Create in-memory database
 #db_path = 'db.sqlite'
 #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://root:cognitivesystems@localhost/pokus'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:cognitivesystems@localhost/pokus'
 # app.config['SQLALCHEMY_ECHO'] = True
 db = SQLAlchemy(app)
 
@@ -588,26 +588,27 @@ class OptimizeView(admin.BaseView):
             outfile.write('% Rooms\n')
             for room, capacity, availability in self.session.query(Room.aspcode, Room.capacity, Room.availability):
                 if capacity == 0: continue
-                outfile.write('r({0}). cap({0},{1}).\n'.format(room, capacity))
+                outfile.write('room({0},{1}).\n'.format(room, capacity))
                 for t in range(len(timeslots)):
                     if available(availability, t):
-                        outfile.write('av({},{}). '.format(room, timeslots[t]))
-                outfile.write('\n')
+                        outfile.write('room_availability({},{}). '.format(room, timeslots[t]))
+                outfile.write('\n\n')
 
             outfile.write('\n% Employees\n')
             for employee, active, availability in self.session.query(Employee.aspcode, Employee.active, Employee.availability):
                 if not active: continue
-                outfile.write('e({}).\n'.format(employee))
+                outfile.write('employee({}).\n'.format(employee))
                 for t in range(len(timeslots)):
                     if available(availability, t):
-                        outfile.write('av({},{}). '.format(room, timeslots[t]))
-                outfile.write('\n')
+                        outfile.write('employee_availability({},{}). '.format(employee, timeslots[t]))
+                outfile.write('\n\n')
 
             outfile.write('\n% Course components\n')
             for component in self.session.query(Component):
                 if component.id <= 4429: continue
+                #print(dir(component.course.employee))
                 print(component)
-                outfile.write('c({0}). cap({0},{1}).\n'.format(component.aspcode, component.capacity))
+                outfile.write('course({0},{1}).\n'.format(component.aspcode, component.capacity))
                 outfile.write('groups({0},{1}). minparallel({0},{2}). maxparallel({0},{3}).\n'.format(component.aspcode, 0,0,0))
 
         return 'LP program is now in file "timetable.lp"'
@@ -903,7 +904,7 @@ def build_db():
     db.session.commit()
 
 if __name__ == '__main__':
-    # build_db()
+#    build_db()
 
 ######################################################################################################################
 ######################################################################################################################
