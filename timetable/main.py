@@ -9,7 +9,10 @@ from flask_babelex import Babel, gettext
 from wtforms import form, fields, validators
 from werkzeug.security import generate_password_hash, check_password_hash
 import os.path
-
+import datetime
+from sqlalchemy.dialects.mysql import LONGTEXT
+from threading import Thread
+from time import sleep
 
 # Create application
 app = Flask(__name__)
@@ -25,7 +28,7 @@ app.config['SECRET_KEY'] = 'I am not actually secret. Fix me before deployment!'
 #db_path = 'db.sqlite'
 #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:cognitivesystems@localhost/pokus'
-# app.config['SQLALCHEMY_ECHO'] = True
+#app.config['SQLALCHEMY_ECHO'] = True
 db = SQLAlchemy(app)
 
 
@@ -541,6 +544,12 @@ class Component(db.Model):
     @property
     def aspcode(self):
         return 'c{}'.format(self.id)
+    
+    @property
+    def aspcapacity(self):
+        if self.capacity == None:
+            return 0
+        return self.capacity
 
     def __str__(self):
         return '{} ({} {})'.format(self.course.name, self.deliverytype.code, self.course.semester)
@@ -583,35 +592,42 @@ class OptimizeView(admin.BaseView):
         self.session = session
     @admin.expose('/')
     def index(self):
-        with open('timetable.lp', 'w') as outfile:
+        inputArr = []
+            
+        inputArr.append('% Rooms\n')
+        for room, capacity, availability in self.session.query(Room.aspcode, Room.capacity, Room.availability):
+            if capacity == 0: continue
+            inputArr.append('room("{0}",{1}).\n'.format(room, capacity))
+            for t in range(len(timeslots)):
+                if available(availability, t):
+                    inputArr.append('room_availability("{}",{}). '.format(room, timeslots[t]))
+            inputArr.append('\n\n')
 
-            outfile.write('% Rooms\n')
-            for room, capacity, availability in self.session.query(Room.aspcode, Room.capacity, Room.availability):
-                if capacity == 0: continue
-                outfile.write('room({0},{1}).\n'.format(room, capacity))
-                for t in range(len(timeslots)):
-                    if available(availability, t):
-                        outfile.write('room_availability({},{}). '.format(room, timeslots[t]))
-                outfile.write('\n\n')
+        inputArr.append('\n% Employees\n')
+        for employee, active, availability in self.session.query(Employee.aspcode, Employee.active, Employee.availability):
+            if not active: continue
+            inputArr.append('employee({}).\n'.format(employee))
+            for t in range(len(timeslots)):
+                if available(availability, t):
+                    inputArr.append('employee_availability({},{}). '.format(employee, timeslots[t]))
+            inputArr.append('\n\n')
 
-            outfile.write('\n% Employees\n')
-            for employee, active, availability in self.session.query(Employee.aspcode, Employee.active, Employee.availability):
-                if not active: continue
-                outfile.write('employee({}).\n'.format(employee))
-                for t in range(len(timeslots)):
-                    if available(availability, t):
-                        outfile.write('employee_availability({},{}). '.format(employee, timeslots[t]))
-                outfile.write('\n\n')
+        inputArr.append('\n% Course components\n')
+        for component in self.session.query(Component):
+            if component.id <= 4429: continue
+            #print(dir(component.course.employee))
+            print(component)
+            inputArr.append('course({0},{1}).\n'.format(component.aspcode, component.aspcapacity))
+            inputArr.append('groups({0},{1}). minparallel({0},{2}). maxparallel({0},{3}).\n'.format(component.aspcode, 0,0,0))
 
-            outfile.write('\n% Course components\n')
-            for component in self.session.query(Component):
-                if component.id <= 4429: continue
-                #print(dir(component.course.employee))
-                print(component)
-                outfile.write('course({0},{1}).\n'.format(component.aspcode, component.capacity))
-                outfile.write('groups({0},{1}). minparallel({0},{2}). maxparallel({0},{3}).\n'.format(component.aspcode, 0,0,0))
+        inputStr = ''.join(inputArr)
 
-        return 'LP program is now in file "timetable.lp"'
+        #with open('timetable.lp', 'w') as outfile:
+        solution = AspSolution(input=inputStr)
+        db.session.merge(solution)
+        db.session.commit()
+        
+        return 'LP program is now in database queue'
 
 
 
@@ -645,6 +661,32 @@ class MyAdminIndexView(admin.AdminIndexView):
         login.logout_user()
         return redirect(url_for('.index'))
 
+class AspSolution(db.Model):
+    __tablename__ = 'aspsolution'
+    id = db.Column(db.Integer, primary_key=True, nullable=True)
+    loaddate = db.Column(db.DateTime)
+    status = db.Column(db.Enum('New','In process','Completed','Error'))
+    input = db.Column(LONGTEXT())
+    output = db.Column(LONGTEXT())
+    comment = db.Column(LONGTEXT())
+    #cohorts = db.relationship('Cohort', secondary=jt_cohort_course, backref='courses')
+    def __init__(self, id=None, loaddate=datetime.datetime.utcnow(), status='New', input=None, 
+                 output=None, comment=None):
+        self.id = id
+        self.loaddate = loaddate
+        self.status = status
+        self.input = input
+        self.output = output
+        self.comment = comment
+    __mapper_args__ = {
+        'order_by' : (id.desc())
+    }
+
+class AspSolutionView(AdminView):
+    form_columns = ['id', 'loaddate', 'status', 'comment']
+
+# for AspSolution
+db.create_all()
 
 # Initialize flask-login
 init_login()
@@ -664,6 +706,7 @@ adminInterface.add_view(RhythmUserView(Rhythm, category='Types'))
 adminInterface.add_view(RoomtypeUserView(Roomtype, category='Types'))
 adminInterface.add_view(SemesterUserView(Semester, category='Types'))
 adminInterface.add_view(OptimizeView())
+adminInterface.add_view(AspSolutionView(AspSolution))
 
 # Additional views for admins
 adminInterface.add_view(ChairAdminView(Chair))
@@ -903,18 +946,52 @@ def build_db():
 
     db.session.commit()
 
+from subprocess import call, Popen, PIPE
+
+def aspsolver_thread(arg):
+    while True:
+        
+        tmpfilepath = "/tmp/cs_timetable.lp"
+        #read db
+        sql = 'select id, loaddate, status, input, comment from '+AspSolution.__tablename__+' where status=\'New\' or status=\'In process\' order by loaddate limit 1'
+        result = db.engine.execute(sql)
+        
+        any_record = False
+        for row in result:
+            print("start asp solving")
+            solution = AspSolution(id = row[0], loaddate = row[1], status = row[2], 
+                                   input=row[3], comment = row[4])
+            solution.status = 'In process'
+            db.session.merge(solution)
+            db.session.commit()
+            
+            with open(tmpfilepath, "w") as inputfile:
+                inputfile.write(solution.input)
+            p1 = Popen(["./gringo",tmpfilepath,"solver.lp"], stdout=PIPE)
+            p2 = Popen(["./clasp","1"], stdin=p1.stdout, stdout=PIPE)
+            solution.output = p2.communicate()[0]
+            
+            solution.status = 'Completed'
+            db.session.merge(solution)
+            db.session.commit()
+            
+            any_record = True
+            print("end solving")
+        if not any_record:
+            sleep(10)
+
 if __name__ == '__main__':
 #    build_db()
+    thread = Thread(target = aspsolver_thread, args = (10,), name="aspsolver_thread")
+    thread.start()
 
 ######################################################################################################################
 ######################################################################################################################
 ######################################################################################################################
-
-
 
 # Start app
 #     app.jinja_env.add_extension('jinja2.ext.do')
-    app.run(debug=True)
+app.run(debug=True, use_reloader=False)#no reloader, because there is thread which should be started once
 
 
 from flask_admin.model import BaseModelView
