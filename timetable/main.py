@@ -28,6 +28,7 @@ app.config['SECRET_KEY'] = 'I am not actually secret. Fix me before deployment!'
 #db_path = 'db.sqlite'
 #app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + db_path
 app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:cognitivesystems@localhost/pokus'
+#app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+mysqlconnector://root:cognitivesystems@localhost/pokus'
 #app.config['SQLALCHEMY_ECHO'] = True
 db = SQLAlchemy(app)
 
@@ -142,6 +143,10 @@ jt_component_roomtype = Table('jt_component_roomtype', db.Model.metadata,
     db.Column('component_id', db.Integer, db.ForeignKey('component.id')),
     db.Column('roomtype_id', db.Integer, db.ForeignKey('roomtype.id'))
 )
+jt_component_employee = Table('jt_component_employee', db.Model.metadata,
+    db.Column('component_id', db.Integer, db.ForeignKey('component.id')),
+    db.Column('employee_id', db.Integer, db.ForeignKey('employee.id'))
+)
 
 
 ###
@@ -186,26 +191,23 @@ class UserAdminView(AdminView):
 
 class Semester(db.Model):
     id = db.Column(db.Integer, primary_key=True, nullable=True)
-    name = db.Column(db.String(10))
+    codename = db.Column(db.String(10))
     #courses = db.relationship('Course', backref='semester')
-    def __init__(self, name=None, id=None):
+    def __init__(self, codename=None, id=None):
         self.id=id
-        self.name=name
+        self.codename=codename
     def __str__(self):
-        return self.name
-    @property
-    def shortname(self):
-        return '{}{}'.format(self.name[0:2], self.name[5:])
+        return self.codename
     __mapper_args__ = {
         'order_by' : id.desc()
     }
 
 class SemesterAdminView(AdminView):
-    form_columns = ['id', 'name', 'courses']
+    form_columns = ['id', 'codename', 'courses']
 
 class SemesterUserView(UserView):
     column_display_pk = True
-    form_columns = ['id', 'name', 'courses']
+    form_columns = ['id', 'codename', 'courses']
     can_edit = True
     form_widget_args = {
         'id': {
@@ -276,11 +278,11 @@ class Employee(db.Model):
         return '{} {}'.format(self.firstname, self.lastname)
 
 class EmployeeAdminView(AdminView):
-    form_columns = ['id', 'salutation', 'degree', 'lastname', 'firstname', 'active', 'chairs', 'courses', 'availability', 'aspcode']
+    form_columns = ['id', 'salutation', 'degree', 'lastname', 'firstname', 'active', 'chairs', 'courses', 'components', 'availability', 'aspcode']
     column_filters = ['active', 'degree']
 
 class EmployeeUserView(UserView):
-    form_columns = ['salutation', 'degree', 'lastname', 'firstname', 'active', 'chairs', 'courses', 'availability', 'aspcode']
+    form_columns = ['salutation', 'degree', 'lastname', 'firstname', 'active', 'chairs', 'courses', 'components', 'availability', 'aspcode']
     column_filters = ['active', 'degree']
 
 
@@ -348,7 +350,7 @@ class Course(db.Model):
         self.readinglist = readinglist
         self.internalcomment = internalcomment
     def __str__(self):
-        return '{} ({} {})'.format(self.name, self.deliverytype.code, self.semester.shortname)
+        return '{} ({} {})'.format(self.name, self.deliverytype.code, self.semester.codename)
     __mapper_args__ = {
         'order_by' : (semester_id.desc(), name)
     }
@@ -535,6 +537,7 @@ class Component(db.Model):
     deliverytype = db.relationship('Deliverytype', backref='components')
     capacity = db.Column(db.Integer())
     roomtypes = db.relationship('Roomtype', secondary=jt_component_roomtype, backref='components')
+    employees = db.relationship('Employee', secondary=jt_component_employee, backref='components')
     rhythm_id = db.Column(db.Integer, db.ForeignKey('rhythm.id'))
     rhythm = db.relationship('Rhythm', backref='components')
     internalcomment = db.Column(db.Text)
@@ -562,10 +565,10 @@ class Component(db.Model):
         self.rhythm_id = rhythm_id
 
 class ComponentAdminView(AdminView):
-    form_columns = ['id', 'course', 'deliverytype', 'capacity', 'roomtypes', 'rhythm']
+    form_columns = ['id', 'course', 'deliverytype', 'employees', 'capacity', 'roomtypes', 'rhythm']
 
 class ComponentUserView(UserView):
-    form_columns = ['course', 'deliverytype', 'capacity', 'roomtypes', 'rhythm']
+    form_columns = ['course', 'deliverytype', 'employees', 'capacity', 'roomtypes', 'rhythm']
 
 
 ###
@@ -595,40 +598,49 @@ class OptimizeView(admin.BaseView):
         inputArr = []
             
         inputArr.append('% Rooms\n')
-        for room, capacity, availability in self.session.query(Room.aspcode, Room.capacity, Room.availability):
-            if capacity == 0: continue
-            inputArr.append('room("{0}",{1}).\n'.format(room, capacity))
+        for room_id, room, capacity, availability, roomtype_id in self.session.query(Room.id, Room.code, Room.capacity, Room.availability, Room.roomtype_id):
+            if capacity < 2 or roomtype_id == 4 : continue
+            inputArr.append('room({0},"{1}"). room_capacity({0},{2}). room_type({0},{3}).\n'.format(room_id, room, capacity, roomtype_id))
             for t in range(len(timeslots)):
                 if available(availability, t):
-                    inputArr.append('room_availability("{}",{}). '.format(room, timeslots[t]))
+                    inputArr.append('room_availability({},{}). '.format(room_id, timeslots[t]))
+            
             inputArr.append('\n\n')
 
         inputArr.append('\n% Employees\n')
-        for employee, active, availability in self.session.query(Employee.aspcode, Employee.active, Employee.availability):
+        for employee_id, salutation, firstname, lastname, active, availability in self.session.query(Employee.id, Employee.salutation, Employee.firstname, Employee.lastname, Employee.active, Employee.availability):
             if not active: continue
-            inputArr.append('employee({}).\n'.format(employee))
+            inputArr.append('employee({},"{} {} {}").\n'.format(employee_id, salutation, firstname, lastname))
             for t in range(len(timeslots)):
                 if available(availability, t):
-                    inputArr.append('employee_availability({},{}). '.format(employee, timeslots[t]))
+                    inputArr.append('employee_availability({},{}). '.format(employee_id, timeslots[t]))
             inputArr.append('\n\n')
 
         inputArr.append('\n% Course components\n')
         for component in self.session.query(Component):
-            if component.id <= 4429: continue
-            #print(dir(component.course.employee))
+            if component.course.semester_id != 23: continue # Quick hack to exclude components from earlier semesters
             print(component)
-            inputArr.append('course({0},{1}).\n'.format(component.aspcode, component.aspcapacity))
-            inputArr.append('groups({0},{1}). minparallel({0},{2}). maxparallel({0},{3}).\n'.format(component.aspcode, 0,0,0))
+            inputArr.append('course({},"{}").\n'.format(component.id, component))
+            inputArr.append('course_rhythm({},{},{},{}).\n'.format(component.id, component.rhythm.hours, 1 if component.rhythm.oddweeks else 0, 1 if component.rhythm.evenweeks else 0))
+            for employee in component.employees:
+                inputArr.append('course_employee({},{}).'.format(component.id, employee.id))
+            inputArr.append('\n')
+            for roomtype in component.roomtypes:
+                inputArr.append('course_roomtype({},{}).'.format(component.id, roomtype.id))
+            inputArr.append('\n')
+            defaultCourseCapacity = 10
+            inputArr.append('course_capacity({},{}).\n'.format(component.id, component.capacity if component.capacity != None else defaultCourseCapacity))
+            inputArr.append('groups({0},{1}). minparallel({0},{2}). maxparallel({0},{3}).\n\n'.format(component.id, 0,0,0))
 
         inputStr = ''.join(inputArr)
+
+#        print(inputStr)
 
         #with open('timetable.lp', 'w') as outfile:
         solution = AspSolution(input=inputStr)
         db.session.merge(solution)
         db.session.commit()
-        
         return 'LP program is now in database queue'
-
 
 
 ### CENTRAL 'ADMIN' VIEW
@@ -749,15 +761,15 @@ def build_db():
     # database (same id for same semester).
     # Original database has a lot more information of unclear relevance for anything.
 
-    for id in range(1, relevant_semester+3):
-        semesterType = 'SS' if id%2==1 else 'WS'
-        year = 2004 + int((id-1)/2)
-        if id%2 == 1:
-            year = str(year)
-        else:
-            year = '{}/{}'.format(year, str(year+1)[2:])
-        semester = Semester(id=id, name='{} {}'.format(semesterType, year))
-        db.session.merge(semester)
+    #for id in range(1, relevant_semester+3):
+    #    semesterType = 'SS' if id%2==1 else 'WS'
+    #    year = 2004 + int((id-1)/2)
+    #    if id%2 == 1:
+    #        year = str(year)
+    #    else:
+    #        year = '{}/{}'.format(year, str(year+1)[2:])
+    #    semester = Semester(id=id, name='{} {}'.format(semesterType, year))
+    #    db.session.merge(semester)
 
     # CHAIRS (complete)
     print('Importing chairs')
@@ -945,8 +957,25 @@ def build_db():
         db.session.merge(component)
 
     db.session.commit()
+    
+    print("Importing jt_component_employee")
+    
+    jt_c_e_sql = """insert into jt_component_employee (employee_id, component_id) 
+select distinct m.ID employee_id, glt.id component_id
+from mitarbeiter m,
+geplante_lehrveranstaltungen_terminmitarbeiter gltm,
+geplante_lehrveranstaltungen_termine glt
+where m.ID = gltm.mitarbeiter
+and gltm.termin = glt.ID
+and (m.ID, glt.ID) not in(select employee_id, component_id from jt_component_employee)
+and (m.ID) in(select id from employee)
+and (glt.ID) in(select id from component)"""
+    db.engine.execute(jt_c_e_sql)
 
 from subprocess import call, Popen, PIPE
+import xlwt
+
+import collections
 
 def aspsolver_thread(arg):
     while True:
@@ -959,6 +988,7 @@ def aspsolver_thread(arg):
         any_record = False
         for row in result:
             print("start asp solving")
+            solution_id = row[0]
             solution = AspSolution(id = row[0], loaddate = row[1], status = row[2], 
                                    input=row[3], comment = row[4])
             solution.status = 'In process'
@@ -969,16 +999,150 @@ def aspsolver_thread(arg):
                 inputfile.write(solution.input)
             p1 = Popen(["./gringo",tmpfilepath,"solver.lp"], stdout=PIPE)
             p2 = Popen(["./clasp","1"], stdin=p1.stdout, stdout=PIPE)
-            solution.output = p2.communicate()[0]
             
-            solution.status = 'Completed'
+            clasp_response = p2.communicate()[0].decode("utf-8")
+            
+            if clasp_response.find("\nSATISFIABLE\n")==-1:
+                solution.output = clasp_response
+                solution.status = 'Error'
+            else:
+                # iterate over answers, and save them to xml file
+                answers = []
+                last_answer_title_index = 0
+                
+                while True:
+                    answer_title_index = clasp_response.find("Answer:", last_answer_title_index)
+                    if answer_title_index == -1:
+                        break
+                    answer_title_index_last = clasp_response.find("\n", answer_title_index)
+                    answer_title = clasp_response[answer_title_index:answer_title_index_last]
+                    answer_body_index_last = clasp_response.find("\n", answer_title_index_last+1)
+                    answer_body = clasp_response[answer_title_index_last+1:answer_body_index_last]
+                    
+                    last_answer_title_index = answer_body_index_last+1
+                    
+                    answer_facts = answer_body.replace(") assigned_",");;;;;assigned_").split(";;;;;")
+                    
+                    for i in range(len(answer_facts)):
+                        fact = answer_facts[i]
+                        answer_facts[i] = parse_asp_predicate(fact)
+                    
+                    answers.append((answer_title,answer_facts))
+                
+                book = xlwt.Workbook()
+                xlwt.add_palette_colour("custom_colour", 0x21)
+                book.set_colour_RGB(0x21, 255, 255, 255)
+                style = xlwt.easyxf('pattern: pattern solid, fore_colour custom_colour; alignment: horizontal left, vertical top; borders: top thin, bottom thin, left thin, right thin;')
+                style.alignment.wrap = 1
+                
+                for item in answers:
+                    last_index = 0
+                    sh = book.add_sheet("Scheduler output "+item[0].replace(":",""))
+                    facts = item[1]
+                    
+                    course_employees = {}
+                    for fact in facts:
+                        if fact[0]=='assigned_employee':
+                            course_id = fact[1]
+                            employee_name = fact[2]
+                            if course_employees.get(course_id) == None:
+                                course_employees[course_id] = []
+                            course_employees[course_id].append(employee_name)
+   
+                    #generate table
+                    table_room_period_course = {}
+            
+                    for fact in facts:
+                        if fact[0]=='assigned_course':
+                            course_id = fact[1]
+                            course_name = fact[2]
+                            course_roomname = fact[3]
+                            course_period = fact[4]
+                            course_title = course_name+" \n"+'/'.join(course_employees[course_id])
+                            if table_room_period_course.get(course_roomname) == None:
+                                table_room_period_course[course_roomname] = {}
+                            table_room_period_course[course_roomname][course_period] = course_title
+
+                    #put table to sheet
+                    last_index = 1
+                    table_room_period_course = collections.OrderedDict(sorted(table_room_period_course.items()))
+                    
+                    for day in ['mon','tue','wed','thu','fri']:
+                        sh.write(last_index, 0, day)
+                        k = 1
+                        for room in table_room_period_course:
+                            sh.write(last_index, k, room, style)
+                            sh.col(k).width = 256*25
+                            k+=1
+                        last_index+=1
+                        
+                        for time,time_title in [('08','08-10'),('10','10-12'),('12','12-14'),('14','14-16'),('16','16-18'),('18','18-20')]:
+                            period = day+time
+                            sh.write(last_index, 0, time_title)
+                            k = 1
+                            for room in table_room_period_course:
+                                if table_room_period_course[room].get(period):
+                                    sh.write(last_index, k, table_room_period_course[room][period], style)
+                                else:
+                                    sh.write(last_index, k, '', style)
+                                k+=1
+                            sh.row(last_index).height_mismatch = True
+                            sh.row(last_index).height = 256*8
+                            last_index+=1
+                    
+#                    sh.write(last_index, 0, ':'.join(fact), style)
+                
+                file_path = "generated/solution"+str(solution_id)+".xls"
+                
+                book.save(file_path)
+                
+                solution.status = 'Success'
+                solution.output = "Saved to '"+file_path+"' in project directory"
+            
+            
             db.session.merge(solution)
             db.session.commit()
             
             any_record = True
             print("end solving")
         if not any_record:
-            sleep(10)
+            sleep(300)
+
+def parse_asp_predicate(fact): #return array of strings, first element is predicate name
+    result = []
+    next_index = fact.find("(")
+    result.append(fact[:next_index])
+    next_argument = fetch_next_argument(fact, next_index)
+    while next_argument != None:
+        next_index = next_argument[0]
+        result.append(next_argument[1])
+        next_argument = fetch_next_argument(fact, next_index)
+    return result
+    
+def fetch_next_argument(fact, start_index):
+    result = []
+    argument_started = False
+    for i in range(start_index+1, len(fact)):
+        if argument_started == False:
+            if fact[i]=='"':
+                argument_started = True
+            elif fact[i]==')':
+                return (i,''.join(result)) 
+            elif fact[i]==',':
+                return (i,''.join(result))
+                continue
+            elif fact[i]==' ':
+                if len(result)==0:
+                    continue
+                else:
+                    result.append(fact[i])
+            else:
+                result.append(fact[i])
+        else:
+            if fact[i]=='"':
+                return (i+1,''.join(result))
+            else:
+                result.append(fact[i])
 
 if __name__ == '__main__':
 #    build_db()
