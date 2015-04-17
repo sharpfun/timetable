@@ -1078,7 +1078,7 @@ def aspsolver_thread(arg):
                         
                         for time,time_title in [('08','08-10'),('10','10-12'),('12','12-14'),('14','14-16'),('16','16-18'),('18','18-20')]:
                             period = day+time
-                            sh.write(last_index, 0, time_title)
+                            sh.write(last_index, 0, time_title, style)
                             k = 1
                             for room in table_room_period_course:
                                 if table_room_period_course[room].get(period):
